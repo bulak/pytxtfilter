@@ -1,6 +1,6 @@
 import pytextfilter as tf
 
-ebird = tf.DelimTxt("ebird", dialect="excel-tab")
+ebird = tf.DelimTxt("ebird", has_header=True, dialect="excel-tab")
 
 # breeding filter
 breeding = ebird.create_filter_template(
@@ -10,11 +10,11 @@ breeding.add_comparison("!in", ["", "F"])
 
 # species
 species = ebird.create_filter_template(
-    "species", "SCIENTIFIC NAME", str)
+    "species", 6, str)
 species.add_comparison("in")
 
 # date
 date = ebird.create_filter_template(
-    "date", "OBSERVATION DATE", str)
+    "date", 28, str)
 date.add_comparison(">=")
 date.add_comparison("<=")

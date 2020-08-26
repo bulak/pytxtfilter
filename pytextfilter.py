@@ -62,15 +62,12 @@ class ColumnFilter(Filter):
 
 
 class DelimTxt(object):
-    def __init__(self, name, fieldnames=None, restkey=None, restval=None,
-                 dialect=None, *args, **kargs):
+    def __init__(self, name, has_header, dialect=None, **fmtparams):
         self.name = name
-        self.fieldnames = fieldnames
-        self.restkey = restkey
-        self.restval = restval
+        self.has_header = has_header
+        self.headers = None
         self.dialect = dialect
-        self.args = args
-        self.kargs = kargs
+        self.fmtparams = fmtparams
         self.filters = []
         self.filter_templates = {}
     def _openfile(self, filename):
@@ -79,9 +76,28 @@ class DelimTxt(object):
         except IOError as err:
             print(f"Can't open file '{filename}': {err}", file=sys.stderr)
             sys.exit(1)
-        self.reader = csv.DictReader(
-            self.filehandle, fieldnames=self.fieldnames, restkey=self.restkey,
-            restval=self.restval, dialect=self.dialect, *self.args, **self.kargs)
+        # self.reader = csv.DictReader(
+        #     self.filehandle, fieldnames=self.fieldnames, restkey=self.restkey,
+        #     restval=self.restval, dialect=self.dialect, *self.args, **self.kargs)
+        self.reader = csv.reader(
+            self.filehandle, dialect=self.dialect, **self.fmtparams)
+        if self.has_header:
+            self.headers = next(self.reader)
+        self._update_col_refs()
+    def _update_col_refs(self):
+        for filtre in self.filters:
+            if not isinstance(filtre.column, int):
+                try:
+                    col_i = self.headers.index(filtre.column)
+                except ValueError:
+                    print(f"Can't find column header name: {filtre.column}",
+                          file=sys.stderr)
+                    sys.exit(1)
+                else:
+                    filtre.column = col_i
+            else:
+                # Column numbers start with 1
+                filtre.column -= 1
     def create_filter_template(self, name, column, val_type):
         column_filter = ColumnFilter(name, column, val_type)
         self.filter_templates[name] = column_filter
@@ -90,11 +106,15 @@ class DelimTxt(object):
         column_filter = self.filter_templates[name]
         column_filter.create_comparisons(*comp_vals)
         self.filters.append(column_filter)
+    def print_filters(self):
+        for f in self.filters:
+            print(f"{f.name} at {f.column}")
     def process(self, filename):
         self._openfile(filename)
-        writer = csv.DictWriter(sys.stdout, fieldnames=self.reader.fieldnames,
-                                dialect=self.dialect)
-        writer.writeheader()
+#        writer = csv.DictWriter(sys.stdout, fieldnames=self.reader.fieldnames,
+#                                dialect=self.dialect)
+        writer = csv.writer(sys.stdout, dialect=self.dialect)
+#        writer.writeheader()
         for row in self.reader:
             passed = all(f.evaluate(row[f.column]) for f in self.filters)
             if passed:
@@ -103,11 +123,13 @@ class DelimTxt(object):
 if __name__ == "__main__":
     delimtxt = DelimTxt("ebird", dialect="excel-tab")
     breeding = delimtxt.create_filter_template(
-        "breeding", "BREEDING BIRD ATLAS CODE", str)
+        "breeding", 9, str)
+        #"BREEDING BIRD ATLAS CODE", str)
     breeding.define_operant("!in", lambda x, y: x not in y)
     breeding.add_comparison("!in", ["", "F"])
     species = delimtxt.create_filter_template(
-        "species", "SCIENTIFIC NAME", str)
+        "species", 5, str)
+        #"SCIENTIFIC NAME", str)
     species.add_comparison("==")
     delimtxt.use_filter("breeding")
     delimtxt.use_filter("species", "Periparus ater")
