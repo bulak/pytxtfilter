@@ -1,11 +1,32 @@
+"""Module docs
+"""
+
+
+__title__ = 'pytxtfilter'
+__version__ = '0.0.1'
+__author__ = 'Bulak Arpat'
+__license__ = 'GPLv3'
+__copyright__ = 'copyright 2020 by Bulak Arpat'
+
+
 import sys
 import operator
 import itertools
+import collections
 import csv
 
 
-class BasicFilter(object):
+class TxtFilterError(Exception):
+    """ docs here
+    """
+    def __init__(self, msg):
+        self.message = msg
+        super().__init__(self.message)
 
+
+class BasicFilter(object):
+    """ docs here
+    """
     def __init__(self, val_type, comp_func, comp_val, reverse=False):
         self.val_type = val_type
         self.comp_func = comp_func
@@ -23,6 +44,8 @@ class BasicFilter(object):
 
 
 class Filter(object):
+    """ docs here
+    """
     operants = {
         "<": (operator.lt, 0),
         "<=": (operator.le, 0),
@@ -44,20 +67,16 @@ class Filter(object):
         self.operants[op] = (comp_func, reverse)
 
     def add_comparison(self, op, comp_val = None):
-#        self.ops.append(self.operants[op])
         self.ops.append(op)
-#        comp_strs = ["*", op, "undef"]
-#        if comp_val is not None:
         self.comp_vals.append(comp_val)
-#            comp_strs[-1] = str(comp_val)
-#        if self.operants[op][1]:
-#            comp_strs.reverse()
-#        self.
+
     def create_comparisons(self, *comp_vals):
-        if comp_vals:
-            assert len(comp_vals) == len(self.ops)
-            self.comp_vals = comp_vals
-        assert len(self.ops) == len(self.comp_vals)
+        avail_pos = [i for i, val in enumerate(self.comp_vals) if val is None]
+        if not len(comp_vals) == len(avail_pos):
+            raise TxtFilterError(
+                "Number of comparison values do not match required value")
+        for i, j in enumerate(avail_pos):
+            self.comp_vals[j] = comp_vals[i]
         self.filters = []
         for i, op in enumerate(self.ops):
             try:
@@ -84,21 +103,22 @@ class Filter(object):
                 comp_str.append(str(comp_val))
             else:
                 comp_str.append("undef")
-            comp_strs.append(f"[{i}]: {' '.join(comp_str)}")
+            comp_strs.append(f"[{i + 1}]: {' '.join(comp_str)}")
         if not comp_strs:
             comp_strs.append("No comparisons defined")
         comp_strs = "\n".join(comp_strs)
         return f"Filter '{self.name}':\n{comp_strs}"
 
 class ColumnFilter(Filter):
+    """ docs here
+    """
     def __init__(self, name, column, val_type):
         super().__init__(name, val_type)
         self.column = column
 
 
 class DelimTxt(object):
-    """
-    Class doc
+    """Class doc
     """
     def __init__(self, name, has_header=False, dialect=None, **fmtparams):
         self.name = name
@@ -106,7 +126,7 @@ class DelimTxt(object):
         self.headers = None
         self.dialect = dialect
         self.fmtparams = fmtparams
-        self.filters = []
+        self.filters = collections.OrderedDict()
         self.filter_templates = {}
 
     def _openfile(self, filename):
@@ -122,7 +142,7 @@ class DelimTxt(object):
         self._update_col_refs()
 
     def _update_col_refs(self):
-        for filtre in self.filters:
+        for filtre in self.filters.values():
             if not isinstance(filtre.column, int):
                 try:
                     col_i = self.headers.index(filtre.column)
@@ -137,39 +157,48 @@ class DelimTxt(object):
                 filtre.column -= 1
 
     def create_filter_template(self, name, column, val_type):
+        if not self.has_header and not isinstance(column, int):
+            raise TxtFilterError(
+                "Column has to be an integer if header is not present")
         column_filter = ColumnFilter(name, column, val_type)
         self.filter_templates[name] = column_filter
         return column_filter
 
+    def print_filter(self, name):
+        print(self.filters[name])
+
     def use_filter(self, name, *comp_vals):
         column_filter = self.filter_templates[name]
         column_filter.create_comparisons(*comp_vals)
-        self.filters.append(column_filter)
+        self.filters[name] = column_filter
 
     def print_filters(self):
-        for f in self.filters:
-            print(f"{f.name} at {f.column}")
+        for i, f in enumerate(self.filters.values()):
+            print(f"{i + 1}. {f}")
 
     def process(self, filename):
         self._openfile(filename)
+        evals = [(f.column, f.evaluate) for f in self.filters.values()]
         writer = csv.writer(sys.stdout, dialect=self.dialect)
         if self.has_header:
             writer.writerow(self.headers)
         for row in self.reader:
-            passed = all(f.evaluate(row[f.column]) for f in self.filters)
+            passed = all(func(row[column]) for column, func in evals)
             if passed:
                 writer.writerow(row)
 
 if __name__ == "__main__":
-    delimtxt = DelimTxt("ebird", dialect="excel-tab")
+    delimtxt = DelimTxt("ebird", has_header=True, dialect="excel-tab")
     breeding = delimtxt.create_filter_template(
         "breeding", "BREEDING BIRD ATLAS CODE", str)
     breeding.define_operant("!in", lambda x, y: x not in y)
     breeding.add_comparison("!in", ["", "F"])
     species = delimtxt.create_filter_template(
-        "species", 5, str)
-        #"SCIENTIFIC NAME", str)
+        "species", 6, str)
     species.add_comparison("==")
     delimtxt.use_filter("breeding")
     delimtxt.use_filter("species", "Periparus ater")
+#    print(species)
+#    delimtxt.print_filter("breeding")
+#    delimtxt.print_filters()
     delimtxt.process(sys.argv[1])
