@@ -3,17 +3,25 @@
 
 
 __title__ = 'pytxtfilter'
-__version__ = '0.0.1'
+__version__ = '0.0.2'
 __author__ = 'Bulak Arpat'
 __license__ = 'GPLv3'
-__copyright__ = 'copyright 2020 by Bulak Arpat'
+__copyright__ = 'copyright 2020-2021 by Bulak Arpat'
 
 
 import sys
 import operator
+import copy
 import itertools
 import collections
 import csv
+
+
+def quote(var):
+    if isinstance(var, int):
+        return str(var)
+    else:
+        return f"'{var}'"
 
 
 class TxtFilterError(Exception):
@@ -114,24 +122,29 @@ class ColumnFilter(Filter):
     """
     def __init__(self, name, column, val_type):
         super().__init__(name, val_type)
-        self.column = column
-
+        self.column_i = None
+        self.apparent_col = column
+    def __str__(self):
+        f_str = super().__str__()
+        return f"{f_str}\nOn column: {quote(self.apparent_col)}"
 
 class DelimTxt(object):
     """Class doc
     """
-    def __init__(self, name, has_header=False, dialect=None, **fmtparams):
+    def __init__(self, name, has_header=False, dialect=None, encoding=None,
+                 **fmtparams):
         self.name = name
         self.has_header = has_header
         self.headers = None
         self.dialect = dialect
+        self.encoding = encoding
         self.fmtparams = fmtparams
         self.filters = collections.OrderedDict()
         self.filter_templates = {}
 
     def _openfile(self, filename):
         try:
-            self.filehandle = open(filename, newline="")
+            self.filehandle = open(filename, newline="", encoding=self.encoding)
         except IOError as err:
             print(f"Can't open file '{filename}': {err}", file=sys.stderr)
             sys.exit(1)
@@ -143,18 +156,17 @@ class DelimTxt(object):
 
     def _update_col_refs(self):
         for filtre in self.filters.values():
-            if not isinstance(filtre.column, int):
+            if isinstance(filtre.apparent_col, int):
+                filtre.column_i = filtre.apparent_col - 1
+            else:
                 try:
-                    col_i = self.headers.index(filtre.column)
+                    col_i = self.headers.index(filtre.apparent_col)
                 except ValueError:
-                    print(f"Can't find column header name: {filtre.column}",
+                    print(f"Can't find column header name: {filtre.apparent_col}",
                           file=sys.stderr)
                     sys.exit(1)
                 else:
-                    filtre.column = col_i
-            else:
-                # Column numbers start with 1
-                filtre.column -= 1
+                    filtre.column_i = col_i
 
     def create_filter_template(self, name, column, val_type):
         if not self.has_header and not isinstance(column, int):
@@ -168,21 +180,44 @@ class DelimTxt(object):
         print(self.filters[name])
 
     def use_filter(self, name, *comp_vals):
-        column_filter = self.filter_templates[name]
+        column_filter = copy.deepcopy(self.filter_templates[name])
         column_filter.create_comparisons(*comp_vals)
         self.filters[name] = column_filter
 
-    def print_filters(self):
-        for i, f in enumerate(self.filters.values()):
-            print(f"{i + 1}. {f}")
+    def print_filters(self, what=None):
+        print_used = not what or what in ["used", "all"]
+        print_avail = what in ["avail", "available", "all"]
+        if not any([print_used, print_avail]):
+            raise TxtFilterError("print_filters arg what can be one of 'used', "
+                                 "'avail', 'available' or 'all'")
+        if print_used:
+            print("== Filters in use ==")
+            for i, f in enumerate(self.filters.values()):
+                print(f"{i + 1}. {f}\n")
+        if print_avail:
+            i = 0
+            title = "== Available filters =="
+            if print_used:
+                title = "== Unused available filters =="
+            print(title)
+            for n, f in self.filter_templates.items():
+                in_use = ""
+                if print_used and n in self.filters:
+                    continue
+                if not print_used and n in self.filters:
+                    in_use = "  *in use*"
+                i += 1
+                print(f"{i}. {f}{in_use}\n")
 
     def process(self, filename):
         self._openfile(filename)
-        evals = [(f.column, f.evaluate) for f in self.filters.values()]
-        writer = csv.writer(sys.stdout, dialect=self.dialect)
+        evals = [(f.column_i, f.evaluate) for f in self.filters.values()]
+        writer = csv.writer(sys.stdout, dialect=self.dialect, **self.fmtparams)
         if self.has_header:
             writer.writerow(self.headers)
+        count = 0
         for row in self.reader:
+            count += 1
             passed = all(func(row[column]) for column, func in evals)
             if passed:
                 writer.writerow(row)
